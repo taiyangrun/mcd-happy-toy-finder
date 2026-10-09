@@ -35,6 +35,8 @@
 启用后在对话框直接用自然语言即可触发本 Skill，例如：
 > "帮我查上海南京东路那家麦当劳，现在开心乐园餐发什么玩具？"
 
+> 仓库根目录已附带脱敏配置示例 **`mcp-config.example.json`**（仅含 `${MCD_MCP_TOKEN}` 环境变量占位符，不含任何真实 Token），可直接参考或复制到 WorkBuddy / 自建 MCP 客户端中使用。
+
 ## 4. 直接运行脚本（命令行）
 ```bash
 # 配置 Token（Linux/macOS）
