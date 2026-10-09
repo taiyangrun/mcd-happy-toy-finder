@@ -15,6 +15,7 @@
 | 认证方式 | 请求头 `Authorization: Bearer <MCP_TOKEN>` |
 | 支持 MCP 版本 | `2025-06-18` 及之前 |
 | 限流 | 每 Token 每分钟 ≤ 600 次（超限 429） |
+| 响应结构 | 优先使用 `structuredContent`（含 `success/code/message/data`），否则解析 `content[].text` 内 JSON |
 
 ## 3. 在 WorkBuddy 中配置（推荐，可获参赛专项奖励）
 在 WorkBuddy 的「连接器 / MCP」中添加如下配置，替换 `YOUR_MCP_TOKEN` 后启用：
@@ -32,7 +33,7 @@
 }
 ```
 启用后在对话框直接用自然语言即可触发本 Skill，例如：
-> "帮我查上海南京东路那家麦当劳，现在开心乐园餐有没有三丽鸥玩具？"
+> "帮我查上海南京东路那家麦当劳，现在开心乐园餐发什么玩具？"
 
 ## 4. 直接运行脚本（命令行）
 ```bash
@@ -43,21 +44,22 @@ export MCD_MCP_TOKEN="你的Token"
 $env:MCD_MCP_TOKEN="你的Token"
 
 # 运行查询
-python scripts/toy_lookup.py --toy "三丽鸥" --city "上海" --store "南京东路"
+python scripts/toy_lookup.py --toy "航海王" --city "上海" --store "南京东路"
 ```
 未配置 Token 时，脚本自动进入**演示模式**（内置样例数据），完整演示查询流程。
 
-## 5. 本作品用到的工具
-| 工具 | 用途 |
-|------|------|
-| `query-nearby-stores` | 按城市/关键字定位门店（取 storeId） |
-| `query-meals` | 查询门店在售餐品，确认开心乐园餐 |
-| `query-meal-detail` | 提取开心乐园餐内「可选玩具」选项 |
-
-> 详见 `references/mcd-mcp-tools.md`。
+## 5. 本作品用到的工具（已在真实环境验证）
+| 工具 | 真实必填入参 | 用途 |
+|------|------|------|
+| `query-nearby-stores` | `beType`(1=到店/5=得来速)、`searchType`(2=按位置)，`searchType=2` 时 `city`/`keyword` 至少其一 | 定位门店，取 `storeCode` |
+| `query-meals` | `storeCode`、`orderType`(1=到店/2=外送)、`beType` | 返回 `data.{categories, meals(码→详情), frequent}`，确认开心乐园餐（取 `code`）|
+| `query-meal-detail` | `storeCode`、`orderType`、`beType`、`code` | 返回 `data.{code,name,rounds}`，`rounds` 中名称含「玩具」的轮次即当前玩具轮次 |
 
 ## 6. 关于「玩具库存」的诚实说明
-麦当劳公开 MCP **未提供**「玩具逐件实时库存」工具。本作品以「开心乐园餐在售 +
-套餐可选玩具」作为库存的**代理信号**，并结合本地图鉴状态给出带置信度的结论，
-结果中明确标注免责声明。若官方未来上线库存/SKU 类工具，只需在 `scripts/mcp_client.py`
-增加对应封装，主流程无需改动。
+麦当劳公开 MCP **未提供**「玩具逐件实时库存 / 具体款式」工具，且开心乐园餐玩具为
+**随机发放**。本作品通过 `query-meal-detail` 读取套餐「玩具轮次」名称作为代理信号：
+- 当轮次为**具体系列名**（如 `海绵宝宝×航海王系列玩具`）时，与本地图鉴做匹配，命中即高置信；
+- 当轮次为 `随机玩具1个`（不暴露具体系列）时，回退到图鉴 `status` 状态判断。
+
+结论均明确标注置信度与免责声明。若官方未来上线库存/SKU 类工具，只需在
+`scripts/mcp_client.py` 增加对应封装，主流程无需改动。

@@ -161,27 +161,83 @@ class McdMcpClient:
     # ------------------------------------------------------------------ #
     # 业务封装
     # ------------------------------------------------------------------ #
-    def query_nearby_stores(self, keyword: str = None, city: str = None,
-                            latitude: float = None, longitude: float = None) -> str:
-        """查询附近/指定城市的麦当劳门店。"""
-        args = {}
-        if keyword:
-            args["keyword"] = keyword
+    def call_tool_structured(self, name: str, arguments: dict = None) -> dict:
+        """调用工具并返回结构化结果。
+
+        优先使用 MCP 响应的 structuredContent（官方服务返回的干净 JSON，
+        含 success/code/message/data）；若服务端未提供 structuredContent，
+        则回退解析 content[].text 里的 JSON 字符串。失败时抛出 McdMcpError。
+        """
+        resp = self._post({
+            "jsonrpc": "2.0",
+            "id": self._next_id(),
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments or {}},
+        })
+        if not resp:
+            raise McdMcpError(f"工具 {name} 无响应")
+        if "error" in resp:
+            raise McdMcpError(f"工具 {name} 返回错误：{resp['error']}")
+        result = resp.get("result", resp)
+        sc = result.get("structuredContent")
+        if isinstance(sc, dict):
+            return sc
+        text = self._extract_text(result)
+        try:
+            return json.loads(text)
+        except (json.JSONDecodeError, TypeError):
+            return {"_text": text}
+
+    # ------------------------------------------------------------------ #
+    # 业务封装（返回值均为已解析的结构化数据，便于上层直接消费）
+    # ------------------------------------------------------------------ #
+    def query_nearby_stores(self, city: str = None, keyword: str = None,
+                            beType: int = 1, searchType: int = 2) -> list:
+        """查询门店，返回门店字典列表。
+
+        真实接口必填 beType(1=到店自提/5=得来速) 与 searchType(2=按位置)；
+        searchType=2 时 city/keyword 至少其一非空（实测仅传 city 会报
+        「城市名或者关键词不能为空」，故仅传城市时把城市作为位置关键词一并带入）。
+        返回 data 为列表，字段：storeCode(唯一编号) / storeName / address /
+        distance / reservation。（beType=1 到店自提时门店无 beCode）
+        """
+        args = {"beType": beType, "searchType": searchType}
         if city:
             args["city"] = city
-        if latitude is not None:
-            args["latitude"] = latitude
-        if longitude is not None:
-            args["longitude"] = longitude
-        return self._extract_text(self.call_tool("query-nearby-stores", args))
+        if keyword:
+            args["keyword"] = keyword
+        elif city and searchType == 2:
+            args["keyword"] = city
+        data = self.call_tool_structured("query-nearby-stores", args).get("data")
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict) and isinstance(data.get("data"), list):
+            return data["data"]
+        return []
 
-    def query_meals(self, store_id: str) -> str:
-        """查询指定门店当前在售餐品（含开心乐园餐）。"""
-        return self._extract_text(self.call_tool("query-meals", {"storeId": store_id}))
+    def query_meals(self, store_code: str, orderType: int = 1, beType: int = 1) -> dict:
+        """查询指定门店当前在售餐品，返回 data 字典。
 
-    def query_meal_detail(self, meal_code: str) -> str:
-        """查询套餐详情，提取套餐内可选玩具选项。"""
-        return self._extract_text(self.call_tool("query-meal-detail", {"mealCode": meal_code}))
+        真实接口必填 storeCode + orderType(1=到店/2=外送) + beType。
+        data 结构：{ categories:[{name,meals:[{code}]}],
+                     meals:{code:{name,currentPrice,...}},
+                     frequent:{code,tags} }
+        """
+        args = {"storeCode": store_code, "orderType": orderType, "beType": beType}
+        return self.call_tool_structured("query-meals", args).get("data") or {}
+
+    def query_meal_detail(self, store_code: str, meal_code: str,
+                          orderType: int = 1, beType: int = 1) -> dict:
+        """查询套餐详情，返回 data 字典。
+
+        真实接口必填 storeCode + orderType + beType + code(餐品唯一编码)。
+        data 结构：{ code, name, rounds:[{id,name,choices:[{code,name,isDefault}]}] }。
+        开心乐园餐的玩具轮次 name 通常为「随机玩具1个」（官方随机发放，
+        不暴露具体玩具型号，故无法据此确认某特定玩具是否有货）。
+        """
+        args = {"storeCode": store_code, "orderType": orderType,
+                "beType": beType, "code": meal_code}
+        return self.call_tool_structured("query-meal-detail", args).get("data") or {}
 
     # ------------------------------------------------------------------ #
     # 演示模式数据
@@ -193,25 +249,43 @@ class McdMcpClient:
             name = params.get("name")
             args = params.get("arguments", {})
             if name == "query-nearby-stores":
-                return {"result": {"content": [{"type": "text", "text": json.dumps([
-                    {"storeId": "SH001", "name": "麦当劳上海南京东路餐厅", "address": "上海市黄浦区南京东路100号", "city": "上海"},
-                    {"storeId": "SH002", "name": "麦当劳上海徐家汇餐厅", "address": "上海市徐汇区肇嘉浜路1000号", "city": "上海"},
-                    {"storeId": "BJ001", "name": "麦当劳北京三里屯餐厅", "address": "北京市朝阳区三里屯路19号", "city": "北京"},
-                ], ensure_ascii=False)}]}}
+                DATA = [
+                    {"storeCode": "SH001", "storeName": "麦当劳上海南京东路餐厅",
+                     "address": "上海市黄浦区南京东路100号", "distance": 120, "reservation": True},
+                    {"storeCode": "SH002", "storeName": "麦当劳上海徐家汇餐厅",
+                     "address": "上海市徐汇区肇嘉浜路1000号", "distance": 800, "reservation": False},
+                    {"storeCode": "BJ001", "storeName": "麦当劳北京三里屯餐厅",
+                     "address": "北京市朝阳区三里屯路19号", "distance": 300, "reservation": True},
+                ]
+                wrap = {"success": True, "code": 200, "message": "请求成功", "data": DATA}
+                return {"result": {"content": [{"type": "text", "text": json.dumps(wrap, ensure_ascii=False)}]}}
             if name == "query-meals":
-                return {"result": {"content": [{"type": "text", "text": json.dumps([
-                    {"mealCode": "HM001", "name": "开心乐园餐（玩具随机）", "category": "儿童", "price": 29.0, "available": True},
-                    {"mealCode": "C001", "name": "巨无霸套餐", "category": "汉堡", "price": 33.0, "available": True},
-                ], ensure_ascii=False)}]}}
+                DATA = {
+                    "categories": [{"name": "儿童", "meals": [{"code": "HM001"}]}],
+                    "meals": {
+                        "HM001": {"name": "鱼排堡开心乐园餐", "currentPrice": "24",
+                                  "originalPrice": "24", "canWithOrder": False},
+                        "C001": {"name": "巨无霸套餐", "currentPrice": "33",
+                                 "originalPrice": "33", "canWithOrder": True},
+                    },
+                    "frequent": {"code": "C001", "tags": ["我的常点"]},
+                }
+                wrap = {"success": True, "code": 200, "message": "请求成功", "data": DATA}
+                return {"result": {"content": [{"type": "text", "text": json.dumps(wrap, ensure_ascii=False)}]}}
             if name == "query-meal-detail":
-                return {"result": {"content": [{"type": "text", "text": json.dumps({
-                    "mealCode": "HM001",
-                    "name": "开心乐园餐（玩具随机）",
-                    "options": [
-                        {"group": "玩具", "items": ["麦麦哒哒", "线条小狗", "三丽鸥家族"]},
-                        {"group": "饮料", "items": ["可乐", "橙汁", "牛奶"]},
+                code = args.get("code", "HM001")
+                # 真实接口中玩具轮次为「随机玩具1个」，不暴露具体款式
+                DATA = {
+                    "code": code,
+                    "name": "鱼排堡开心乐园餐",
+                    "rounds": [
+                        {"id": 1, "name": "鱼排堡", "choices": [{"code": "504642", "name": "鱼排堡", "isDefault": 1}]},
+                        {"id": 2, "name": "迷你薯条", "choices": [{"code": "504643", "name": "迷你薯条", "isDefault": 1}]},
+                        {"id": 5, "name": "随机玩具1个", "choices": [{"code": "7001", "name": "随机玩具1个", "isDefault": 1}]},
                     ],
-                }, ensure_ascii=False)}]}}
+                }
+                wrap = {"success": True, "code": 200, "message": "请求成功", "data": DATA}
+                return {"result": {"content": [{"type": "text", "text": json.dumps(wrap, ensure_ascii=False)}]}}
         # initialize / 其它
         return {"result": {"serverInfo": {"name": "mcd-mcp (demo)"}}}
 

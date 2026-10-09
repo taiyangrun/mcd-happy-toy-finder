@@ -188,6 +188,19 @@
       "description": "农历新年生肖主题限定玩具，每年一款，节日期间随开心乐园餐发放，过期不补。",
       "keywords": ["新春", "春节", "生肖", "新年", "springfestival", "限定"],
       "status": "节日限定"
+    },
+    {
+      "id": "spongebob-onepiece-2026",
+      "name": "海绵宝宝×航海王",
+      "series": "IP联名",
+      "ip": "SpongeBob × ONE PIECE（海绵宝宝 × 航海王）",
+      "era": "2026 当前轮次",
+      "region": "全国",
+      "rarity": "普通",
+      "type": "公仔",
+      "description": "海绵宝宝与航海王（ONE PIECE）联动系列玩具，是当前开心乐园餐在发轮次之一（部分门店套餐详情的玩具轮次会显示具体系列名）。",
+      "keywords": ["海绵宝宝", "航海王", "spongebob", "onepiece", "one piece", "海绵宝宝×航海王", "派大星", "路飞"],
+      "status": "在售轮换中"
     }
   ]
 }
